@@ -316,6 +316,7 @@ server(Addr, Port) ->
               sockaddr_un/0,
               sockaddr_ll/0,
               sockaddr_dl/0,
+              sockaddr_vm/0,
               sockaddr_unspec/0,
               sockaddr_native/0,
 
@@ -339,6 +340,9 @@ server(Addr, Port) ->
               ipv6_pmtudisc/0,
               ipv6_hops/0,
               ipv6_pktinfo/0,
+
+              vsock_port_number/0,
+              vsock_context_id/0,
 
               sctp_assocparams/0,
               sctp_event_subscribe/0,
@@ -454,9 +458,12 @@ protocol domain `inet6`, is supported.
 [`is_supported(local)` ](`is_supported/1`) tells if the
 protocol domain `local` is supported.
 
+[`is_supported(vsock)` ](`is_supported/1`) tells if the
+protocol domain `vsock` is supported.
+
 `supports/0` reports both values, but also many more, with a single call.
 """.
--type domain() :: inet | inet6 | local | unspec.
+-type domain() :: inet | inet6 | local | vsock | unspec.
 
 %% We support only a subset of all types.
 %% RDM - Reliably Delivered Messages
@@ -643,6 +650,12 @@ The value `default` is only valid to _set_ and is translated to the C value
           ifindex := integer()
          }.
 
+-type vsock_port_number() ::
+        0..16#FFFFFFFF.
+
+-type vsock_context_id() ::
+        0..16#FFFFFFFF.
+
 -doc "C: `struct sctp_assocparams`".
 -type sctp_assocparams() ::
         #{assoc_id                := integer(),
@@ -769,6 +782,18 @@ Link level address (PF_LINK) on BSD:s.
           data     := binary()}.
 
 -doc """
+C: `struct sockaddr` of `AF_VSOCK`
+
+In C, a `struct sockaddr` with `sa_family = AF_VSOCK`
+and the VSOCK `port` and `cid` fields set.
+""".
+-type sockaddr_vm() ::
+        #{family   := 'vsock',
+          port     := vsock_port_number(),
+          cid      := 'any' | 'local' | 'host' | 'hypervisor' |
+                      vsock_context_id()}.
+
+-doc """
 C: `struct sockaddr` of `AF_UNSPEC`
 
 In C, a `struct sockaddr` with `sa_family = AF_UNSPEC`
@@ -793,6 +818,7 @@ and the content of `sa_data` in the `t:map/0` key `addr`.
         sockaddr_un()      |
         sockaddr_ll()      |
         sockaddr_dl()      |
+        sockaddr_vm()      |
         sockaddr_unspec()  |
         sockaddr_native().
 
@@ -1819,8 +1845,8 @@ Return a filtered list of known sockets.
 
 There are several predefined `FilterRule`s and one general:
 
-- **`inet | inet6`** - Only the sockets with matching `t:domain/0`
-  are returned.
+- **`inet | inet6 | vsock | local`** - Only the sockets with
+  matching `t:domain/0` are returned.
 
 - **`stream | dgram | seqpacket`** - Only the sockets with
   matching `t:type/0` are returned.
@@ -1838,7 +1864,7 @@ There are several predefined `FilterRule`s and one general:
 """.
 -spec which_sockets(FilterRule) -> [socket()] when
 	FilterRule ::
-          'inet' | 'inet6' | 'local' |
+          'inet' | 'inet6' | 'vsock' | 'local' |
           'stream' | 'dgram' | 'seqpacket' |
           'sctp' | 'tcp' | 'udp' |
           pid() |
@@ -1847,6 +1873,7 @@ There are several predefined `FilterRule`s and one general:
 which_sockets(Domain)
   when Domain =:= inet;
        Domain =:= inet6;
+       Domain =:= vsock;
        Domain =:= local ->
     ?REGISTRY:which_sockets({domain, Domain});
 
@@ -2073,7 +2100,7 @@ Otherwise the same as `i/2` with the same first argument
 and the default information (see `i/0`).
 """.
 -spec i(InfoKeys :: info_keys()) -> ok;
-       (Domain :: inet | inet6 | local) -> ok;
+       (Domain :: inet | inet6 | vsock | local) -> ok;
        (Proto :: sctp | tcp | udp) -> ok;
        (Type :: dgram | seqpacket | stream) -> ok.
 
@@ -2081,6 +2108,7 @@ i(InfoKeys) when is_list(InfoKeys) ->
     do_i(which_sockets(), InfoKeys);
 i(Domain) when (Domain =:= inet) orelse
 	       (Domain =:= inet6) orelse
+	       (Domain =:= vsock) orelse
 	       (Domain =:= local) ->
     do_i(which_sockets(Domain), default_info_keys());
 i(Proto) when (Proto =:= tcp) orelse
@@ -2109,7 +2137,7 @@ all sockets of that specific `t:protocol/0`.
 If the first argument is `Type` print information for
 all sockets of that specific `t:type/0`.
 """.
--spec i(Domain :: inet | inet6 | local, InfoKeys) -> ok
+-spec i(Domain :: inet | inet6 | vsock | local, InfoKeys) -> ok
               when InfoKeys :: info_keys();
        (Proto :: sctp | tcp | udp, InfoKeys) -> ok
               when InfoKeys :: info_keys();
@@ -2119,6 +2147,7 @@ all sockets of that specific `t:type/0`.
 i(Domain, InfoKeys)
   when ((Domain =:= inet) orelse
 	(Domain =:= inet6) orelse
+	(Domain =:= vsock) orelse
 	(Domain =:= local)) andalso
        is_list(InfoKeys) ->
     do_i(which_sockets(Domain), InfoKeys);
@@ -2275,6 +2304,11 @@ fmt_sockaddr(#{family := Fam,
 	{0,0,0,0,0,0,0,1} -> "localhost:" ++ fmt_port(Port, Proto);
 	IP                -> inet_parse:ntoa(IP) ++ ":" ++ fmt_port(Port, Proto)
     end;
+fmt_sockaddr(#{family := vsock, port := Port, cid := 16#ffffffff}, _Proto) ->
+    % Display the "any" CID as -1 for consistency with VMADDR_CID_ANY
+    "vsock[-1]:" ++ integer_to_list(Port);
+fmt_sockaddr(#{family := vsock, port := Port, cid := Cid}, _Proto) ->
+    "vsock[" ++ integer_to_list(Cid) ++ "]:" ++ integer_to_list(Port);
 fmt_sockaddr(#{family := local,
 	       path   := Path}, _Proto) ->
     "local:" ++
@@ -2863,6 +2897,9 @@ bind(?socket(SockRef), Addr) when is_reference(SockRef) ->
                        Domain =:= inet6 ->
                     prim_socket:bind(
                       SockRef, #{family => Domain, addr => Addr});
+                {ok, vsock} when Addr =:= any ->
+                    prim_socket:bind(
+                      SockRef, #{family => vsock, port => any, cid => any});
                 {ok, _Domain} ->
                     {error, eafnosupport};
                 {error, _} = ERROR ->

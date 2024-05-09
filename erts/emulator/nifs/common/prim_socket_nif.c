@@ -1979,6 +1979,7 @@ static const struct in6_addr in6addr_loopback =
     GLOBAL_ATOM_DECL(cantconfig);		       \
     GLOBAL_ATOM_DECL(chaos);                           \
     GLOBAL_ATOM_DECL(checksum);                        \
+    GLOBAL_ATOM_DECL(cid);                             \
     GLOBAL_ATOM_DECL(close);                           \
     GLOBAL_ATOM_DECL(closed);                          \
     GLOBAL_ATOM_DECL(close_wait);                      \
@@ -2057,6 +2058,7 @@ static const struct in6_addr in6addr_loopback =
     GLOBAL_ATOM_DECL(hoplimit);                        \
     GLOBAL_ATOM_DECL(hopopts);                         \
     GLOBAL_ATOM_DECL(host);                            \
+    GLOBAL_ATOM_DECL(hypervisor);                      \
     GLOBAL_ATOM_DECL(icmp);                            \
     GLOBAL_ATOM_DECL(icmp6);                           \
     GLOBAL_ATOM_DECL(ieee802);                         \
@@ -2301,6 +2303,7 @@ static const struct in6_addr in6addr_loopback =
     GLOBAL_ATOM_DECL(use_registry);                    \
     GLOBAL_ATOM_DECL(value);                           \
     GLOBAL_ATOM_DECL(void);                            \
+    GLOBAL_ATOM_DECL(vsock);                           \
     GLOBAL_ATOM_DECL(v6only);                          \
     GLOBAL_ATOM_DECL(write_byte);                      \
     GLOBAL_ATOM_DECL(write_fails);                     \
@@ -4696,6 +4699,13 @@ ERL_NIF_TERM esock_supports_0(ErlNifEnv* env)
     is_supported = esock_atom_false;
 #endif
     TARRAY_ADD(opts, MKT2(env, esock_atom_local, is_supported));
+
+#if defined(HAS_AF_VSOCK)
+    is_supported = esock_atom_true;
+#else
+    is_supported = esock_atom_false;
+#endif
+    TARRAY_ADD(opts, MKT2(env, esock_atom_vsock, is_supported));
 
 #if defined(HAVE_SETNS)
     is_supported = esock_atom_true;
